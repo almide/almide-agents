@@ -1,0 +1,576 @@
+# Almide — quick reference for coding agents
+
+You are about to write **Almide** (`.almd` files), a statically-typed language
+designed specifically for LLM code generation. This file is the complete
+syntax and stdlib reference. Read it once before writing any Almide code —
+almost every mistake an agent makes on the first try is covered below.
+
+After writing code, verify it compiles: `almide check app.almd` (type check
+only) or `almide run app.almd` (compile + execute). If it fails, **read the
+diagnostic and fix accordingly** — Almide's error messages are written for
+machine consumption, with a `try:` block you can paste in directly. Some
+fixes are mechanical and can be auto-applied with `almide fix app.almd`.
+
+Full docs (spec, stdlib function signatures, architecture): https://github.com/almide/almide/tree/develop/docs
+
+---
+
+## File structure
+```
+import <module>
+// declarations...
+```
+
+## Project layout (multi-file)
+For projects > 1 file, create a package:
+```
+mypkg/
+  almide.toml          # [package] name = "mypkg"
+  src/
+    main.almd          # entry: imports siblings via `import self.<name>`
+    classifier.almd    # sibling module: bare fn / let / type
+    bindings/
+      python.almd      # nested namespace → mypkg.bindings.python
+```
+Sibling import:
+```
+import self.classifier                          // → classifier.fn(), classifier.LET
+import self.classifier.{classify, NUMBERS}      // selective: bare names
+import self.classifier as cls                   // alias
+```
+**Do NOT** write `import x from "./x.almd"` — file paths aren't supported. Always use `import self.<sibling>`.
+
+## Types
+```
+type Name = { field: Type, ... }                     // record
+type Name = | Case1(Type) | Case2 | Case3{f: Type}  // variant (leading |)
+type Name[A, B] = { first: A, second: B }            // generic (use [] not <>)
+type Name = Type                                     // type alias (transparent)
+type Name = Case1(Type) | Case2(Type)                // inline variant (no leading |)
+type Handler = (String) -> String                    // function type alias
+```
+
+### Conventions
+```
+type Color: Eq, Repr = Red | Green | Blue   // convention after type name with :
+```
+
+**Variant serialization — recommended pattern.** When a variant type
+crosses a serialization boundary (JSON / file IO / dojo fixtures),
+declare `: Codec` to auto-generate `Type.encode` / `Type.decode`
+instead of hand-writing `match` ladders. The auto-derived Codec emits
+tagged-JSON with the ctor name as the tag and payload fields under
+`value`:
+```
+type Event: Codec = | Click(Int, Int) | Scroll{dy: Int}
+// Event.encode(Click(10, 20)) → {"tag": "Click", "value": [10, 20]}
+// Event.encode(Scroll { dy: 5 }) → {"tag": "Scroll", "value": {"dy": 5}}
+```
+Skip `: Codec` only for variants that never serialize
+(internal enums like `Endian`). Every other variant should opt in —
+the roundtrip code is LLM-error prone when hand-written.
+
+### Built-in types
+- Primitives: `Int`, `Float`, `String`, `Bool`, `Unit`, `Path`
+- Collections: `List[T]`, `Map[K, V]`, `Set[T]`
+- Error: `Result[T, E]` (`ok(v)` / `err(e)`), `Option[T]` (`some(v)` / `none`)
+
+## Functions
+```
+fn name(x: Type, y: Type) -> RetType = expr
+effect fn name(x: Type) -> Result[T, E] = expr       // has side effects
+```
+
+### Visibility (optional prefix before fn/type)
+- `fn f()` — public (default)
+- `mod fn f()` — same project only (`pub(crate)` in Rust)
+- `local fn f()` — this file only (private)
+
+### Modifiers (order matters): `[local|mod]? effect? fn`
+
+### Predicate: `fn empty(xs: List[T]) -> Bool` (Bool return only)
+
+### Hole / Todo
+```
+fn parse(text: String) -> Ast = _                     // hole (type-checked stub)
+fn optimize(ast: Ast) -> Ast = todo("implement later") // todo with message
+```
+
+### Mutable parameters
+```
+fn incr(mut x: Int) -> Unit = { x = x + 1 }
+var n = 5
+incr(n)          // n is now 6 -- mutated in place, not returned
+```
+Caller must pass a `var` binding (`let` or a temporary is E007). `mut` can be
+on any parameter, any position. This is how in-place stdlib ops work
+(`list.push`, `list.pop`, `list.clear`, …).
+
+## Built-in Protocols
+Eq and Hash are automatic (compiler-derived from type structure). No annotation needed.
+```
+// Eq: all value types support == (except Fn)
+let same = color_a == color_b  // just works
+```
+### Protocols (user-defined conventions)
+```
+// Define a protocol
+protocol Action {
+  fn name(a: Self) -> String
+  fn execute(a: Self, ctx: Context) -> Result[String, String]
+}
+
+// Satisfy via convention methods -- no impl block, this is the only way.
+// The checker validates the signature against the protocol (arity, types).
+type GreetAction: Action = { greeting: String }
+fn GreetAction.name(a: GreetAction) -> String = "greet"
+fn GreetAction.execute(a: GreetAction, ctx: Context) -> Result[String, String] =
+  ok(a.greeting)
+
+// Use as generic bound
+fn run_action[T: Action](action: T, ctx: Context) -> Result[String, String] =
+  action.execute(ctx)
+```
+Built-in conventions (Eq, Repr, Ord, Hash, Codec) are protocols too.
+
+The first parameter can be named/typed explicitly (`a: GreetAction`) or written as bare `self` (sugar for `self: Self`) — both resolve to the declaring type on a convention method, same as inside a `protocol { ... }` declaration.
+
+## Expressions
+
+### If (MUST have else — no standalone `if`)
+```
+if cond then expr else expr
+if a then x else if b then y else z
+```
+**`if` without `else` returns Unit.** Use `guard` for early return instead.
+
+### Match (exhaustive, supports guards)
+```
+match subject {
+  Pattern => expr,
+  Pattern if guard_cond => expr,
+  _ => expr,
+}
+```
+
+### Patterns
+```
+_                          // wildcard (match only — NOT a valid variable name)
+name                       // bind
+ok(inner) / err(inner)     // Result
+some(inner) / none         // Option
+TypeName(args...)          // constructor
+TypeName{ field1, field2 } // record pattern
+literal                    // int, float, string, bool
+```
+**`_` can appear in match patterns, `let _ = x` (discard), `for _ in xs`, and lambda params `(_ ) => expr`.**
+
+**NOT supported in patterns:** no `...` spread, no range patterns (`1..5`), no nested `|` (or-pattern), no `as` binding.
+
+### Lambda
+```
+(x) => expr
+(x, y) => expr
+items.map((x) => x + 1)
+
+// multi-line: use a block as the body
+let f = (x) => {
+  let y = x * 2
+  y + 1
+}
+```
+
+### Block (last expression is the value)
+```
+{
+  let x = 1
+  let y = 2
+  x + y
+}
+```
+
+### For...in loop
+```
+for x in xs {
+  println(x)
+}
+
+for (k, v) in config {
+  println(k + " = " + v)
+}
+
+for key in m {
+  println(key)           // iterates keys only
+}
+```
+### While loop
+```
+var i = 0
+while i < 10 {
+  println(int.to_string(i))
+  i = i + 1
+}
+```
+
+### Range
+```
+0..5            // [0, 1, 2, 3, 4]  (exclusive end)
+1..=5           // [1, 2, 3, 4, 5]  (inclusive end)
+for i in 0..n { ... }    // optimized: no list allocation
+let xs = list.map(0..10, (i) => i * i)   // range as List[Int]
+```
+
+### Pipe
+```
+text |> string.trim |> string.split(",")
+xs |> filter(_, (x) => x > 0)      // _ = placeholder for piped value
+```
+
+### Record & Spread
+```
+{ name: "alice", age: 30 }
+{ ...base, name: "bob" }
+User { name: "alice" }     // named record construction — canonical form
+User(name: "alice")        // alias: named-argument call syntax, normalized to the brace form
+User("alice")              // WRONG: records take named fields, not positional (E021)
+```
+The paren alias also works for matching a plain record type (`User(name) => ...`).
+It does **not** work for a variant's record-payload case — `Circle { radius }` (a
+case of `type Shape = Circle { radius: Float } | ...`) only matches as
+`Circle { radius }`, never `Circle(radius)` (E021).
+
+### List
+```
+[1, 2, 3]
+[]                         // empty list (there is NO list.new())
+xs[0]                      // index read
+xs[i] = value              // index write (var only)
+```
+
+### Map
+```
+["a": 1, "b": 2]          // map literal
+[:]                        // empty map (requires type annotation)
+let m: Map[String, Int] = [:]
+m["key"]                   // index read (returns Option[V])
+m["key"] = value           // index write (var only)
+```
+
+### String interpolation
+```
+"hello ${name}, result=${1 + 1}"
+```
+
+### String escapes
+```
+"\n \t \r \\ \" \$"   // newline, tab, return, backslash, quote, dollar
+"\x1b"                // \xNN  — two hex digits, codepoint 0x00..0xFF (ESC here)
+"\u{1F600}"           // \u{…} — 1..6 hex digits, any Unicode scalar (😀)
+```
+A malformed numeric escape (e.g. `\xzz`, `\u{}`) is left literal.
+
+### Heredoc (multi-line strings)
+```
+let sql = """
+  SELECT *
+  FROM users
+"""
+// Leading whitespace stripped based on minimum indent
+// Interpolation ${expr} works the same
+// Raw heredoc: r"""...""" (no escapes)
+```
+
+## Statements
+
+### Top-level let (module-scope constant)
+```
+let PI = 3.14159265358979323846
+let MAX_RETRIES = 3
+let GREETING = "Hello"
+```
+Top-level `let` is evaluated at compile time (const) or via `LazyLock` (for non-const expressions like String).
+
+### let / var
+```
+let x = 1                   // immutable
+let x: Int = 1              // with type annotation
+var y = 2                   // mutable
+y = y + 1                   // reassign (var only)
+f([]: List[Int])            // type ascription in call args
+f([:]: Map[String, Int])    // typed empty map in call args
+```
+
+### Destructuring
+```
+let { name, age } = user    // record destructure (1 level only)
+```
+
+### Unwrap operators
+```
+expr!              // unwrap Result/Option, propagate err (effect fn only)
+expr ?? fallback   // unwrap or use fallback value
+expr?              // Result → Option (err → none)
+expr?.field        // optional chaining (Option[Record] → Option[FieldType])
+```
+
+### Guard (early return / loop break)
+```
+guard x > 0 else err("must be positive")
+guard fs.exists(path) else err(NotFound(path))
+
+// with block body:
+guard not fs.exists(path) else {
+  println("already exists")
+  ok(())
+}
+```
+## Test
+```
+test "description" {
+  assert_eq(add(1, 2), 3)
+  assert(x > 0)
+  assert_ne(a, b)
+}
+```
+
+### Testing effect fn error cases
+
+In test blocks, `effect fn` calls return `Result[T, String]` — no auto-unwrap. Use `!` for the value, or assert on `ok`/`err` directly:
+
+```almide
+effect fn validate(n: Int) -> Int = {
+  guard n > 0 else err("bad")!
+  n
+}
+
+test "ok value" { assert_eq(validate(5)!, 5) }          // explicit unwrap
+test "ok result" { assert_eq(validate(5), ok(5)) }      // Result-aware
+test "err" { assert_eq(validate(-1), err("bad")) }      // natural
+```
+
+## Built-in functions
+```
+println(s)                 // print line to stdout
+eprintln(s)                // print line to stderr
+assert_eq(a, b)            // assert equal
+assert_ne(a, b)            // assert not equal
+assert(cond)               // assert true
+```
+**There is no `print` function.** Use `println` for all output (including error messages to user).
+`eprintln` is for debug/internal errors only — user-facing messages MUST use `println`.
+
+### Stdin & parsing
+```
+import io                                     // io is NOT auto-imported
+effect fn main() -> Unit = {
+  let line = io.read_line()                   // plain String — NOT a Result. Do not add ! or ?
+  let n = int.parse(string.trim(line)) ?? 0   // int.parse(s) -> Result[Int, String]
+  println(int.to_string(n))
+}
+```
+`io.read_line()` reads one stdin line with the trailing newline stripped, returns `""` on EOF,
+and requires an `effect fn` caller. `int.parse` / `float.parse` return `Result` — unwrap with
+`??`, `!` (effect fn), or `?`. There is no `int.from_string`.
+
+## Entry point
+```
+effect fn main() -> Unit = {
+  let args = process.args()              // command-line args (Go-style)
+  let name = list.get(args, 1) ?? "world"
+  let content = fs.read_text("config.txt")!   // propagate error with !
+  println("Hello, ${name}: ${content}")
+}
+```
+`effect fn main()` is auto-wrapped to return `Result<(), String>`. No need to write `ok(())` or `-> Result[...]`.
+Command-line arguments are accessed via `process.args()` (not main parameters).
+
+## Operators (precedence high→low)
+`. () ! ?? ?` > `not -` > `^` (power) > `* / %` > `+ -` > `== != < > <= >=` (non-assoc) > `and` > `or` > `|>` `>>`
+
+`^` is exponentiation (right-associative, `**` also accepted). `+` is concatenation for strings and lists (overloaded with addition). XOR is available as `int.bxor(a, b)`.
+
+## UFCS
+`f(x, y)` ≡ `x.f(y)` — compiler resolves automatically.
+
+## Standard library modules
+
+Full function signatures: https://github.com/almide/almide/tree/develop/docs/stdlib
+
+| Module | Description | Import |
+|---|---|---|
+| string | String manipulation | auto-imported |
+| list | List operations | auto-imported |
+| map | Map (dictionary) operations | auto-imported |
+| set | Set operations | auto-imported |
+| int | Integer arithmetic and bitwise | auto-imported |
+| float | Floating-point operations | auto-imported |
+| value | Dynamic value manipulation | auto-imported |
+| result | Result type operations | auto-imported |
+| option | Option type operations | auto-imported |
+| json | JSON parsing and querying | `import json` |
+| math | Mathematical functions | `import math` |
+| regex | Regular expressions | `import regex` |
+| datetime | Date and time | `import datetime` |
+| bytes | Binary data | `import bytes` |
+| matrix | 2D matrix operations | `import matrix` |
+| testing | Test assertions | `import testing` |
+| error | Error construction | `import error` |
+| fs | File system | `import fs` |
+| env | Environment and system | `import env` |
+| process | Process execution, env vars, signals | `import process` |
+| io | Standard I/O | `import io` |
+| http | HTTP client and server | `import http` |
+| random | Random number generation | `import random` |
+
+## Key rules
+- Newline = statement separator (no semicolons needed)
+- `[]` for generics, NOT `<>`
+- `<` `>` are always comparison operators
+- `effect fn` for side effects, NOT `fn name!()`
+- Predicate functions return `Bool` (no special suffix)
+- No exceptions — use `Result[T, E]` everywhere
+- No null — use `Option[T]`
+- No inheritance — use composition
+- No macros, no operator overloading, no implicit conversions
+- Empty list = `[]`, empty map = `[:]` (with type annotation)
+- `_` is ONLY for match wildcard patterns, never as a variable name
+- The stdlib functions listed above are exhaustive — no other functions exist
+- Use `for x in xs { ... }` for iteration
+- **No nested functions.** All `fn` must be at the top level. Use lambdas for local helpers
+- **No `let mut`.** Use `var` for mutable bindings. `mut` itself is a real keyword, but only as a parameter modifier (`fn f(mut x: Int)`) — see Functions
+- Almide is NOT Rust. No `&`, `trait` (use `protocol`), `impl` (use convention methods: `fn Type.method(...)`), `pub`, `mod` (as declaration)
+
+## Naming conventions across stdlib
+
+- `bytes`: `read_<dtype>_le|be(b, pos)` for one value, `read_<dtype>_le_array(b, pos, count)` for bulk, `set_<dtype>_le(b, pos, val)` to overwrite, `append_<dtype>_le(b, val)` to grow. `<dtype>` ∈ `u8|u16|u32|i32|i64|f16|f32|f64`.
+- `matrix`: row-shaped ops use `_rows` suffix (`softmax_rows`, `slice_rows`, `gather_rows`, `layer_norm_rows`); singular `_row` when an op consumes/produces *one* row (`linear_row`, `dot_row`, `broadcast_add_row`); column ops use `_cols` (`split_cols_even`, `concat_cols`).
+- `from_X` builds from another representation, `to_X` is its inverse (e.g. `from_bytes_f64_le` ↔ `to_bytes_f64_le`).
+
+## Common mistakes (DO NOT)
+- `list[1, 2, 3]` → **WRONG**. Write `[1, 2, 3]`. `list` is a module, not a type constructor
+- `each(xs, f)` → **WRONG**. Write `list.each(xs, f)`. All stdlib functions need module prefix
+- `map[K, V]` as a value → **WRONG**. Write `[:]` with type annotation to create an empty map
+- `List.new()` → **WRONG**. Write `[]`. There is no `new()` for List
+- `{"a": 1}` as a map → **WRONG**. Write `["a": 1]`. Braces `{}` are for records/blocks, brackets `[]` for lists and maps
+- `string.length(s)` → **WRONG**. Write `string.len(s)`. No synonyms
+- `string.to_lowercase(s)` → **WRONG**. Write `string.to_lower(s)`. No synonyms
+- `string.to_uppercase(s)` → **WRONG**. Write `string.to_upper(s)`. No synonyms
+- `string.substring(s, i, j)` → **WRONG**. Write `string.slice(s, i, j)`. No synonyms
+- `println(x)` where x is Int → **WRONG**. Write `println(int.to_string(x))`. No implicit conversion
+- `1 :: 2 :: []` → **WRONG**. Write `[1, 2]`. There is no cons operator `::`
+- `fn foo<T>(x: T)` → **WRONG**. Write `fn foo[T](x: T)`. Use `[]` for generics, not `<>`
+- `let mut x = 1` → **WRONG**. Write `var x = 1`. `mut` is only a parameter modifier (`fn f(mut x: Int)`), not a binding modifier
+- Nested `fn` inside a function → **WRONG**. All `fn` must be top-level. Use `let helper = (x) => ...` for local functions
+- `match x { ... pattern => expr }` with `...` → **WRONG**. No spread in patterns
+- `int.from_string(s)` → **WRONG**. There is no such function. Use `int.parse(s)` (returns `Result[Int, String]`)
+- Inventing a comparison function like `int.gt(a, b)` → **WRONG**. Use operators: `a > b`
+- OCaml-style `let x = e in body` → **WRONG**. Use a block: `{ let x = e; body }`
+- `return expr` → **WRONG**. The last expression in a block is the return value. No `return` keyword
+
+## Complete example
+```
+import fs
+
+type AppError =
+  | NotFound(String)
+  | Io(String)
+
+effect fn greet(name: String) -> Result[Unit, AppError] = {
+  guard string.len(name) > 0 else err(NotFound("empty name"))
+  println("Hello, ${name}!")
+  ok(())
+}
+
+effect fn main() -> Result[Unit, AppError] = {
+  let args = process.args()
+  let cmd = list.get(args, 1) ?? "help"
+  match cmd {
+    "greet" => {
+      let name = list.get(args, 2) ?? "world"
+      greet(name)
+    },
+    "read" => {
+      let path = list.get(args, 2) ?? "input.txt"
+      let content = fs.read_text(path).map_err((e) => Io(e))!
+      println(content)
+      ok(())
+    },
+    other => {
+      println("Usage: app <greet|read> [arg]")
+      ok(())
+    },
+  }
+}
+
+test "greet succeeds" {
+  assert_eq(string.len("hello"), 5)
+}
+```
+
+## Common mistakes from other languages
+
+These are the most frequent errors when generating Almide from LLM training on Rust/Python/JS/Scala.
+
+### ✗ `if cond { }` → ✓ `if cond then ... else ...`
+```
+✗ if x > 0 { "positive" } else { "negative" }
+✓ if x > 0 then "positive" else "negative"
+```
+
+### ✗ `x => expr` → ✓ `(x) => expr`
+Lambda parameters **must** be wrapped in parentheses.
+```
+✗ list.map(xs, x => x + 1)
+✓ list.map(xs, (x) => x + 1)
+```
+
+### ✗ `module::func()` → ✓ `module.func()`
+Almide uses `.` for module access, not `::`.
+```
+✗ list::len(xs)
+✓ list.len(xs)
+```
+
+### ✗ `list.push(xs, item)` for value → ✓ `xs + [item]`
+`list.push` mutates a `var` and returns `Unit`. For immutable list building, use `+`.
+```
+✗ some(list.push(stack, "("))     // returns Option[Unit]
+✓ some(stack + ["("])             // returns Option[List[String]]
+```
+
+### ✗ `let x = e in body` → ✓ `{ let x = e; body }`
+ML-style let-in is not supported. Use a block.
+```
+✗ let y = f(x) in y + 1
+✓ { let y = f(x); y + 1 }
+```
+
+### ✗ `foldLeft` / `foldRight` → ✓ `list.fold`
+```
+✗ xs.foldLeft(0, (acc, x) => acc + x)
+✓ list.fold(xs, 0, (acc, x) => acc + x)
+```
+
+### ✗ `Char` type → ✓ `String`
+Almide has no `Char` type. Single characters are `String`: `"a"`, `"("`.
+
+### ✗ `break` / `continue` → ✓ recursion
+Use a recursive helper function instead of loop control keywords.
+```
+✗ while cond { if done then break }
+✓ fn loop(state) = if done then state else loop(next_state)
+```
+
+### ✗ `return expr` → ✓ just `expr`
+The last expression in a block is the return value. No `return` keyword.
+```
+✗ fn f(x: Int) -> Int = { return x + 1 }
+✓ fn f(x: Int) -> Int = x + 1
+```
+
+### ✗ Reassigning function parameters → ✓ `var` copy
+Function parameters are immutable. Copy to `var` first.
+```
+✗ fn f(n: Int) -> Int = { n = n - 1; n }
+✓ fn f(n: Int) -> Int = { var m = n; m = m - 1; m }
+```
