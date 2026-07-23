@@ -1,5 +1,7 @@
 # almide-agents
 
+[日本語](./README.ja.md)
+
 A drop-in reference package that teaches any coding agent — Claude Code, Codex, or otherwise — how to write [Almide](https://github.com/almide/almide) correctly on the first try.
 
 Almide is a statically-typed language designed specifically for LLM code generation. The compiler's own diagnostics are written to be read by an agent and fixed automatically. This package is the syntax/stdlib reference that closes the loop: give it to your agent before it writes a single line.
@@ -38,7 +40,7 @@ If your project already has an `AGENTS.md`, append this one's contents instead o
 
 ## Why this exists
 
-Almide's own [CHEATSHEET.md](https://github.com/almide/almide/blob/develop/docs/CHEATSHEET.md) has always been written for AI code generation. This repo just makes it installable, instead of something you have to remember to paste in by hand. Background on why Almide is built this way: [the Zenn article](https://zenn.dev/o6lvl4/) on 4.5 months of having AI agents build the compiler itself.
+Almide's own [CHEATSHEET.md](https://github.com/almide/almide/blob/develop/docs/CHEATSHEET.md) has always been written for AI code generation. This repo just makes it installable, instead of something you have to remember to paste in by hand.
 
 ## Keeping this in sync
 
