@@ -6,6 +6,28 @@ A drop-in reference package that teaches any coding agent — Claude Code, Codex
 
 Almide is a statically-typed language designed specifically for LLM code generation. The compiler's own diagnostics are written to be read by an agent and fixed automatically. This package is the syntax/stdlib reference that closes the loop: give it to your agent before it writes a single line.
 
+## Getting started with Almide itself
+
+No installation required — [try it in the browser](https://almide.github.io/playground/).
+
+To install locally:
+
+```bash
+# macOS / Linux
+curl -fsSL https://raw.githubusercontent.com/almide/almide/main/tools/install.sh | sh
+```
+
+```powershell
+# Windows
+irm https://raw.githubusercontent.com/almide/almide/main/tools/install.ps1 | iex
+```
+
+Then set up this package (below) so your agent knows the syntax, and ask it to write something:
+
+```bash
+almide run app.almd
+```
+
 ## Contents
 
 - **`AGENTS.md`** — the reference, in the emerging cross-tool [AGENTS.md](https://agents.md/) convention (Codex and other tools read this automatically from a project root).
