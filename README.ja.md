@@ -9,7 +9,7 @@ Almideは、AIによるコード生成のために設計された静的型付け
 ## 内容
 
 - **`AGENTS.md`** — [AGENTS.md](https://agents.md/)という、ツールをまたいで広まりつつある規約に沿ったリファレンスです（Codexなどのツールが、プロジェクトのルートから自動で読み込みます）。
-- **`.claude/skills/almide/SKILL.md`** — 同じ内容を、[Claude Codeのスキル](https://docs.claude.com/en/docs/claude-code/skills)として使える形にしたものです。
+- **`claude-skill/almide/SKILL.md`** — 同じ内容を、[Claude Codeのスキル](https://docs.claude.com/en/docs/claude-code/skills)として使える形にしたものです。
 
 ## 使い方
 
@@ -19,7 +19,7 @@ Almideは、AIによるコード生成のために設計された静的型付け
 
 ```bash
 git clone https://github.com/almide/almide-agents.git /tmp/almide-agents
-cp -r /tmp/almide-agents/.claude/skills/almide ~/.claude/skills/almide
+cp -r /tmp/almide-agents/claude-skill/almide ~/.claude/skills/almide
 ```
 
 Almideに関する作業のときに、Claude Codeが自動で読み込みます。

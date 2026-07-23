@@ -9,7 +9,7 @@ Almide is a statically-typed language designed specifically for LLM code generat
 ## Contents
 
 - **`AGENTS.md`** — the reference, in the emerging cross-tool [AGENTS.md](https://agents.md/) convention (Codex and other tools read this automatically from a project root).
-- **`.claude/skills/almide/SKILL.md`** — the same reference, packaged as a [Claude Code skill](https://docs.claude.com/en/docs/claude-code/skills).
+- **`claude-skill/almide/SKILL.md`** — the same reference, packaged as a [Claude Code skill](https://docs.claude.com/en/docs/claude-code/skills).
 
 ## Usage
 
@@ -19,7 +19,7 @@ Copy (or symlink) the skill directory into your user-level skills folder:
 
 ```bash
 git clone https://github.com/almide/almide-agents.git /tmp/almide-agents
-cp -r /tmp/almide-agents/.claude/skills/almide ~/.claude/skills/almide
+cp -r /tmp/almide-agents/claude-skill/almide ~/.claude/skills/almide
 ```
 
 Claude Code will pick it up automatically whenever a task involves Almide.
