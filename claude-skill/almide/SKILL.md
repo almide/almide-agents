@@ -170,7 +170,7 @@ literal                    // int, float, string, bool
 ```
 **`_` can appear in match patterns, `let _ = x` (discard), `for _ in xs`, and lambda params `(_ ) => expr`.**
 
-**NOT supported in patterns:** no `...` spread, no range patterns (`1..5`), no nested `|` (or-pattern), no `as` binding.
+**NOT supported in patterns:** no `...` spread, no range patterns (`1..<5`), no nested `|` (or-pattern), no `as` binding.
 
 ### Lambda
 ```
@@ -219,10 +219,10 @@ while i < 10 {
 
 ### Range
 ```
-0..5            // [0, 1, 2, 3, 4]  (exclusive end)
-1..=5           // [1, 2, 3, 4, 5]  (inclusive end)
-for i in 0..n { ... }    // optimized: no list allocation
-let xs = list.map(0..10, (i) => i * i)   // range as List[Int]
+0..<5           // [0, 1, 2, 3, 4]  (exclusive end)
+1...5           // [1, 2, 3, 4, 5]  (inclusive end)
+for i in 0..<n { ... }   // optimized: no list allocation
+let xs = list.map(0..<10, (i) => i * i)  // range as List[Int]
 ```
 
 ### Pipe
