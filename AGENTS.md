@@ -162,10 +162,21 @@ some(inner) / none         // Option
 TypeName(args...)          // constructor
 TypeName{ field1, field2 } // record pattern
 literal                    // int, float, string, bool
+a | b | c                  // or-pattern: any alternative matches (binder-free)
+[h, ..t]                   // list-rest: len >= 1, t binds the tail (a list)
+[a, b, ..]                 // rest ignored: len >= 2, rest slot is LAST-only
+c @ Circle(r)              // as-pattern: c binds the whole, r the payload
 ```
 **`_` can appear in match patterns, `let _ = x` (discard), `for _ in xs`, and lambda params `(_ ) => expr`.**
 
-**NOT supported in patterns:** no `...` spread, no range patterns (`1..<5`), no nested `|` (or-pattern), no `as` binding.
+**NOT supported in patterns:** no range patterns (`1..5`), no rest anywhere but the LAST list slot (`[..t, x]` refuses). Or-pattern alternatives (`"a" | "an" | "the" => …`) ARE supported at the top of an arm, but cannot bind variables — write separate arms when the body needs the payload. List-rest (`[h, ..t]`) IS supported and is the idiomatic head/tail split; as-patterns (`c @ Circle(r)`) bind the whole value beside the destructuring.
+
+```almide
+fn sum(xs: List[Int]) -> Int = match xs {
+  [] => 0,
+  [h, ..t] => h + sum(t),
+}
+```
 
 ### Lambda
 ```
@@ -348,6 +359,23 @@ test "ok result" { assert_eq(validate(5), ok(5)) }      // Result-aware
 test "err" { assert_eq(validate(-1), err("bad")) }      // natural
 ```
 
+### Snapshot assertions
+
+`testing.assert_snapshot(actual: String, expected: String)` compares against a literal written at the call site — no sidecar file. Start with `""`, run `almide test --update-snapshots <file>` (or `ALMIDE_UPDATE_SNAPSHOTS=1`) and the found value is written back as the second argument (a heredoc when multi-line). Later drift fails the plain run with a diff; `almide test --ci` (or `CI=true`) never writes — a new or drifted snapshot fails there.
+
+```almide
+import testing
+
+fn render(xs: List[Int]) -> String = xs |> list.map((x) => "item ${int.to_string(x)}") |> list.join("\n")
+
+test "snapshot" {
+  testing.assert_snapshot(render([1, 2]), """
+    item 1
+    item 2
+    """)
+}
+```
+
 ## Built-in functions
 ```
 println(s)                 // print line to stdout
@@ -402,7 +430,7 @@ Full function signatures: https://github.com/almide/almide/tree/develop/docs/std
 | list | List operations | auto-imported |
 | map | Map (dictionary) operations | auto-imported |
 | set | Set operations | auto-imported |
-| int | Integer arithmetic and bitwise | auto-imported |
+| int | Integer arithmetic and bitwise; parity `int.is_even(n)` / `int.is_odd(n)` | auto-imported |
 | float | Floating-point operations | auto-imported |
 | value | Dynamic value manipulation | auto-imported |
 | result | Result type operations | auto-imported |
@@ -413,13 +441,13 @@ Full function signatures: https://github.com/almide/almide/tree/develop/docs/std
 | datetime | Date and time | `import datetime` |
 | bytes | Binary data | `import bytes` |
 | matrix | 2D matrix operations | `import matrix` |
-| testing | Test assertions | `import testing` |
+| testing | Test assertions incl. `testing.assert_snapshot(actual, expected)` (accept with `almide test --update-snapshots`, `--ci` never writes) | `import testing` |
 | error | Error construction | `import error` |
 | fs | File system | `import fs` |
 | env | Environment and system | `import env` |
 | process | Process execution, env vars, signals | `import process` |
 | io | Standard I/O | `import io` |
-| http | HTTP client and server | `import http` |
+| http | HTTP client and server. Body-only `http.get/post/put/patch/delete/request` each have a `*_response` twin with the same parameters returning the whole response — read it with `http.status_code(resp)`, `http.headers(resp)`, `http.get_header(resp, k)`, `http.header_values(resp, k)`, `http.body(resp)` (any complete response is `ok`, redirects are not followed) | `import http` |
 | random | Random number generation | `import random` |
 
 ## Key rules
